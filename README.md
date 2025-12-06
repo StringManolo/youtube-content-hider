@@ -8,6 +8,8 @@ A powerful userscript that allows you to hide/show YouTube Shorts and Posts with
 ## Demo
 
 
+https://github.com/user-attachments/assets/05a9327b-ec06-425d-89f3-22fa495691aa
+
 
 ## Features
 

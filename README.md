@@ -1,10 +1,13 @@
 # YouTube Content Hider & Debugger
 
+![YouTube Content Hider](https://img.shields.io/badge/YouTube-Content%20Hider-red)
+![Version](https://img.shields.io/badge/version-4.7-blue)
+
 A powerful userscript that allows you to hide/show YouTube Shorts and Posts with an intuitive debug interface.
 
-![YouTube Content Hider](https://img.shields.io/badge/YouTube-Content%20Hider-red)
-![Version](https://img.shields.io/badge/version-4.0-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+## Demo
+
+
 
 ## Features
 

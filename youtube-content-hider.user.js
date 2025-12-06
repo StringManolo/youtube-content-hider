@@ -8,7 +8,7 @@
 // @match        https://m.youtube.com/*
 // @run-at       document-idle
 // ==/UserScript==
-
+ 
 (function() {
     'use strict';
 

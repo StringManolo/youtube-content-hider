@@ -38,13 +38,13 @@ https://github.com/user-attachments/assets/05a9327b-ec06-425d-89f3-22fa495691aa
    - Save (Ctrl+S or Cmd+S)
    - Refresh YouTube
 
-   Click this direct download link: [Download YouTube Content Hider](https://github.com/StringManolo/youtube-content-hider/releases/download/V4.7.1/youtube-content-hider.user.js)
+   Click this direct download link: [Download YouTube Content Hider](https://github.com/StringManolo/youtube-content-hider/releases/download/4.7.1/youtube-content-hider.user.js)
 
 ### Android (Cromite Browser)
 
 1. Open Cromite browser
 2. Go to Settings → UserScripts
-3. Download the script [clicking here](https://github.com/StringManolo/youtube-content-hider/releases/download/V4.7.1/youtube-content-hider.user.js)
+3. Download the script [clicking here](https://github.com/StringManolo/youtube-content-hider/releases/download/4.7.1/youtube-content-hider.user.js)
 4. Tap the "+" button select the file from your downloads folder
 5. Enable the script
 6. Reload YouTube

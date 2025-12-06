@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         YouTube Content Hider & Debugger
+// @name         YouTube Content Hider & Debugger - FIXED
 // @namespace    http://tampermonkey.net/
-// @version      4.7
-// @description  Hide/Show YouTube Shorts and Posts with debug capabilities
+// @version      4.7.1
+// @description  Hide/Show YouTube Shorts and Posts with debug capabilities - Fixed for search results
 // @author       StringManolo
 // @match        https://www.youtube.com/*
 // @match        https://m.youtube.com/*
@@ -18,8 +18,9 @@
     hidePostsByDefault: true,
     showDebugButton: true,
     autoHideDelay: 2000,
-    scanInterval: 5000,
-    autoScrollLogs: false
+    scanInterval: 3000,
+    autoScrollLogs: false,
+    disableObserverOnSearch: true // NEW: Disable observer on search pages
   };
 
   // === STATE MANAGEMENT ===
@@ -29,12 +30,16 @@
     controlsVisible: false,
     logsVisible: false,
     isMobile: window.location.hostname === 'm.youtube.com',
+    isSearchPage: window.location.pathname.includes('/results') || window.location.search.includes('search_query'),
     elementCount: { shorts: 0, posts: 0, total: 0 },
     isHighlighting: false,
-    userScrolledLogs: false
+    userScrolledLogs: false,
+    observer: null,
+    lastProcessTime: 0,
+    processDebounce: 1000
   };
 
-  // === SELECTORS === (expanded to catch more elements)
+  // === SELECTORS === (optimized for search pages)
   const selectors = {
     shorts: [
       'ytd-reel-shelf-renderer',
@@ -46,30 +51,19 @@
       'ytd-video-renderer:has(a[href*="/shorts/"])',
       'ytd-rich-item-renderer:has(a[href*="/shorts/"])',
       'ytd-rich-shelf-renderer:has(#title-text:contains("Shorts"))',
-      // Additional selectors for better coverage
-      '[aria-label="Shorts"]',
-      'ytd-rich-shelf-renderer:has(ytd-rich-shelf-renderer[is-shorts])',
-      'ytd-item-section-renderer:has(a[href*="/shorts/"])',
-      'ytd-grid-renderer:has(a[href*="/shorts/"])',
-      'ytm-reel-shelf-renderer',
-      'ytm-item-section-renderer:has(a[href*="/shorts/"])',
+      // Search page specific
+      'ytd-video-renderer:has([overlay-style="SHORTS"])',
+      'ytm-video-with-context-renderer:has(a[href*="/shorts/"])',
       // Mobile specific
-      'ytm-rich-section-renderer:has(a[href*="/shorts/"])',
-      // Catch-all for shorts sections
-      'ytd-section-list-renderer:has(ytd-reel-shelf-renderer)',
-      'ytd-section-list-renderer:has(ytd-rich-shelf-renderer[is-shorts])'
+      'ytm-reel-shelf-renderer',
+      'ytm-rich-section-renderer:has(a[href*="/shorts/"])'
     ],
     posts: [
       'ytd-backstage-post-renderer',
       'ytd-post-renderer',
       'ytd-rich-item-renderer:has(ytd-backstage-post-renderer)',
       'ytm-backstage-post-renderer',
-      'ytm-post-renderer',
-      // Additional selectors
-      'ytd-item-section-renderer:has(ytd-backstage-post-renderer)',
-      'ytd-comments-header-renderer:has(ytd-backstage-post-renderer)',
-      // Community posts
-      'ytd-engagement-panel-section-list-renderer:has(ytd-backstage-post-renderer)'
+      'ytm-post-renderer'
     ]
   };
 
@@ -157,6 +151,16 @@
                 margin: 0;
                 color: #4444ff;
                 font-size: 14px;
+            }
+
+            .debug-controls .page-info {
+                font-size: 10px;
+                color: #888;
+                margin-bottom: 10px;
+                padding: 3px;
+                background: rgba(255,255,255,0.1);
+                border-radius: 3px;
+                text-align: center;
             }
 
             .btn-group {
@@ -369,49 +373,30 @@
                 display: none !important;
             }
 
-            /* Hidden elements with 3 dots */
-            .ytd-menu-renderer.ytd-reel-shelf-renderer {
-                display: none !important;
-            }
-
-            /* Debug highlight style - VERY VISIBLE */
+            /* Debug highlight style */
             .yt-debug-highlight {
-                background-color: rgba(255, 0, 0, 0.5) !important;
-                border: 4px solid #ff0000 !important;
-                box-shadow: 0 0 0 6px rgba(255, 0, 0, 0.8) !important;
+                background-color: rgba(255, 0, 0, 0.3) !important;
+                border: 2px solid #ff0000 !important;
                 position: relative !important;
                 z-index: 9999 !important;
-                outline: 3px dashed #ff0000 !important;
-                outline-offset: 3px !important;
-                animation: pulse-highlight 1s infinite !important;
-            }
-
-            @keyframes pulse-highlight {
-                0% { box-shadow: 0 0 0 6px rgba(255, 0, 0, 0.8); }
-                50% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0.4); }
-                100% { box-shadow: 0 0 0 6px rgba(255, 0, 0, 0.8); }
+                outline: 2px dashed #ff0000 !important;
+                outline-offset: 2px !important;
             }
 
             .yt-debug-highlight::before {
-                content: "DEBUG HIGHLIGHT";
+                content: "HIDDEN";
                 position: absolute;
-                top: -30px;
+                top: -20px;
                 left: 0;
                 background: #ff0000;
                 color: white;
-                padding: 4px 10px;
-                font-size: 12px;
+                padding: 2px 6px;
+                font-size: 10px;
                 font-weight: bold;
                 z-index: 10000;
                 white-space: nowrap;
-                border-radius: 4px;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-            }
-
-            /* Special style for remaining 3 dots */
-            .yt-debug-highlight-dots {
-                background-color: rgba(255, 100, 100, 0.7) !important;
-                border: 3px solid #ff5555 !important;
+                border-radius: 3px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
             }
         `;
     document.head.appendChild(style);
@@ -753,7 +738,10 @@
     controlsContainer.className = 'debug-controls hidden';
     controlsContainer.innerHTML = `
             <div class="controls-header">
-                <h3>Debug Controls</h3>
+                <h3>YouTube Content Hider v4.7.1</h3>
+            </div>
+            <div class="page-info" id="page-info">
+                ${state.isSearchPage ? 'Search Results Page' : 'Normal Page'} • ${state.isMobile ? 'Mobile' : 'Desktop'}
             </div>
             <div class="btn-group">
                 <div class="btn-row">
@@ -821,7 +809,6 @@
         controlsContainer.classList.remove('hidden');
         floatingButton.classList.add('active');
         floatingButton.innerHTML = '🔧 Debug (ON)';
-        // Force update counters when controls are shown
         updateCounter();
       } else {
         controlsContainer.classList.add('hidden');
@@ -842,22 +829,22 @@
         logsContainer.classList.add('hidden');
       }
     }
-    updateCounter(); // Update button colors
+    updateCounter();
   }
 
   function toggleShorts() {
     state.hideShorts = !state.hideShorts;
     addLog(`${state.hideShorts ? 'Hiding' : 'Showing'} Shorts`, 'warning');
-    processElements(true); // Force immediate processing
+    processElements(true);
   }
 
   function togglePosts() {
     state.hidePosts = !state.hidePosts;
     addLog(`${state.hidePosts ? 'Hiding' : 'Showing'} Posts`, 'warning');
-    processElements(true); // Force immediate processing
+    processElements(true);
   }
 
-  // === HIGHLIGHT SYSTEM - FIXED ===
+  // === HIGHLIGHT SYSTEM ===
   function toggleHighlightElements() {
     if (state.isHighlighting) {
       removeAllHighlights();
@@ -866,19 +853,18 @@
     } else {
       highlightAllElements();
       state.isHighlighting = true;
-      addLog('Highlights enabled - showing elements', 'warning');
+      addLog('Highlights enabled', 'warning');
     }
     updateCounter();
   }
 
   function highlightAllElements() {
-    // Clear any existing highlights first
     const existingHighlights = document.querySelectorAll('.yt-debug-highlight');
     existingHighlights.forEach(el => el.classList.remove('yt-debug-highlight'));
 
     let totalHighlights = 0;
 
-    // Highlight Shorts elements using selectors
+    // Highlight Shorts elements
     selectors.shorts.forEach(selector => {
       try {
         const elements = document.querySelectorAll(selector);
@@ -888,12 +874,10 @@
             totalHighlights++;
           }
         });
-      } catch (e) {
-        // Ignore invalid selectors
-      }
+      } catch (e) {}
     });
 
-    // Highlight Posts elements using selectors
+    // Highlight Posts elements
     selectors.posts.forEach(selector => {
       try {
         const elements = document.querySelectorAll(selector);
@@ -903,37 +887,7 @@
             totalHighlights++;
           }
         });
-      } catch (e) {
-        // Ignore invalid selectors
-      }
-    });
-
-    // Also highlight hidden elements that might not match current selectors
-    const hiddenShorts = document.querySelectorAll('.yt-hidden-shorts');
-    const hiddenPosts = document.querySelectorAll('.yt-hidden-posts');
-
-    hiddenShorts.forEach(el => {
-      if (el && el.offsetParent !== null && !el.classList.contains('yt-debug-highlight')) {
-        el.classList.add('yt-debug-highlight');
-        totalHighlights++;
-      }
-    });
-
-    hiddenPosts.forEach(el => {
-      if (el && el.offsetParent !== null && !el.classList.contains('yt-debug-highlight')) {
-        el.classList.add('yt-debug-highlight');
-        totalHighlights++;
-      }
-    });
-
-    // Special handling for remaining 3 dots menu
-    const remainingMenus = document.querySelectorAll('ytd-menu-renderer.ytd-reel-shelf-renderer, ytd-menu-renderer[class*="shorts"]');
-    remainingMenus.forEach(el => {
-      if (el && el.offsetParent !== null) {
-        el.classList.add('yt-debug-highlight');
-        el.classList.add('yt-debug-highlight-dots');
-        totalHighlights++;
-      }
+      } catch (e) {}
     });
 
     addLog(`Highlighted ${totalHighlights} elements`, 'success');
@@ -943,16 +897,24 @@
     const highlighted = document.querySelectorAll('.yt-debug-highlight');
     highlighted.forEach(element => {
       element.classList.remove('yt-debug-highlight');
-      element.classList.remove('yt-debug-highlight-dots');
     });
   }
 
-  // === ELEMENT PROCESSING ===
+  // === ELEMENT PROCESSING - OPTIMIZED ===
   function processElements(forceLog = false) {
+    const now = Date.now();
+    
+    // Debounce processing to avoid infinite loops
+    if (!forceLog && now - state.lastProcessTime < state.processDebounce) {
+      return;
+    }
+    
+    state.lastProcessTime = now;
+    
     let foundShorts = 0;
     let foundPosts = 0;
 
-    // Process Shorts
+    // Process Shorts with a different approach for search pages
     selectors.shorts.forEach(selector => {
       try {
         const elements = document.querySelectorAll(selector);
@@ -960,18 +922,13 @@
           elements.forEach(element => {
             if (element && element.offsetParent !== null) {
               foundShorts++;
+              
               if (state.hideShorts) {
                 element.classList.add('yt-hidden-shorts');
-                // Hide the 3 dots menu as well
-                const menu = element.querySelector('ytd-menu-renderer');
-                if (menu) menu.style.display = 'none';
               } else {
                 element.classList.remove('yt-hidden-shorts');
-                // Restore the 3 dots menu
-                const menu = element.querySelector('ytd-menu-renderer');
-                if (menu) menu.style.display = '';
               }
-              // Update highlight if highlighting is active
+              
               if (state.isHighlighting) {
                 element.classList.add('yt-debug-highlight');
               } else {
@@ -980,28 +937,8 @@
             }
           });
         }
-      } catch (e) {
-        // Ignore invalid selectors
-      }
+      } catch (e) {}
     });
-
-    // Special handling for remaining Shorts elements (like shelf headers)
-    if (state.hideShorts) {
-      const shortsHeaders = document.querySelectorAll('h2, h3, yt-formatted-string');
-      shortsHeaders.forEach(header => {
-        const text = (header.textContent || '').toLowerCase();
-        if (text.includes('shorts')) {
-          const parent = header.closest('ytd-rich-shelf-renderer, ytd-reel-shelf-renderer, ytd-item-section-renderer');
-          if (parent) {
-            foundShorts++;
-            parent.classList.add('yt-hidden-shorts');
-            if (state.isHighlighting) {
-              parent.classList.add('yt-debug-highlight');
-            }
-          }
-        }
-      });
-    }
 
     // Process Posts
     selectors.posts.forEach(selector => {
@@ -1011,12 +948,13 @@
           elements.forEach(element => {
             if (element && element.offsetParent !== null) {
               foundPosts++;
+              
               if (state.hidePosts) {
                 element.classList.add('yt-hidden-posts');
               } else {
                 element.classList.remove('yt-hidden-posts');
               }
-              // Update highlight if highlighting is active
+              
               if (state.isHighlighting) {
                 element.classList.add('yt-debug-highlight');
               } else {
@@ -1025,12 +963,10 @@
             }
           });
         }
-      } catch (e) {
-        // Ignore invalid selectors
-      }
+      } catch (e) {}
     });
 
-    // Also process elements that are already hidden but need to be shown
+    // Show previously hidden elements if needed
     if (!state.hideShorts) {
       const hiddenShorts = document.querySelectorAll('.yt-hidden-shorts');
       hiddenShorts.forEach(el => {
@@ -1056,32 +992,67 @@
     state.elementCount.posts = foundPosts;
     state.elementCount.total = foundShorts + foundPosts;
 
-    // Update UI
     updateCounter();
 
-    // Only log if forced or it's the first few scans
-    if (forceLog || debugLog.length < 3 || Math.random() < 0.1) {
+    if (forceLog || debugLog.length < 3) {
       addLog(`Found: ${foundShorts} Shorts, ${foundPosts} Posts`, 'success');
     }
   }
 
-  // === OBSERVER AND INITIALIZATION ===
+  // === OBSERVER - FIXED FOR SEARCH PAGES ===
   function setupObserver() {
+    // Don't use MutationObserver on search pages if configured
+    if (config.disableObserverOnSearch && state.isSearchPage) {
+      addLog('Search page detected - MutationObserver disabled to prevent reloads', 'warning');
+      return null;
+    }
+
     const observer = new MutationObserver((mutations) => {
       let newContent = false;
 
       mutations.forEach((mutation) => {
+        // Only process if nodes were added
         if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-          newContent = true;
+          // Check if the added nodes contain relevant content
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeType === 1) { // Element node
+              const isRelevant = selectors.shorts.some(selector => 
+                node.matches && node.matches(selector)) || 
+                selectors.posts.some(selector => 
+                  node.matches && node.matches(selector));
+              
+              if (isRelevant) {
+                newContent = true;
+              }
+              
+              // Check children
+              if (node.querySelector) {
+                const hasShorts = selectors.shorts.some(selector => 
+                  node.querySelector(selector));
+                const hasPosts = selectors.posts.some(selector => 
+                  node.querySelector(selector));
+                
+                if (hasShorts || hasPosts) {
+                  newContent = true;
+                }
+              }
+            }
+          });
         }
       });
 
       if (newContent) {
-        setTimeout(() => processElements(), 1000);
+        // Use setTimeout to break the synchronous loop
+        setTimeout(() => processElements(), 500);
       }
     });
 
-    observer.observe(document.body, {
+    // Use more targeted observation
+    const targetNode = state.isMobile ? 
+      document.querySelector('#contents, ytm-item-section-renderer') || document.body :
+      document.querySelector('#contents, ytd-rich-grid-renderer') || document.body;
+    
+    observer.observe(targetNode, {
       childList: true,
       subtree: true
     });
@@ -1090,7 +1061,12 @@
     return observer;
   }
 
+  // === MAIN INITIALIZATION ===
   function init() {
+    // Update search page detection
+    state.isSearchPage = window.location.pathname.includes('/results') || 
+                         window.location.search.includes('search_query');
+    
     // Inject styles
     injectStyles();
 
@@ -1102,55 +1078,69 @@
 
       // Initial setup
       setTimeout(() => {
-        addLog('YouTube Content Hider v4.7 initialized', 'success');
+        addLog('YouTube Content Hider v4.7.1 initialized', 'success');
         addLog(`Platform: ${state.isMobile ? 'Mobile' : 'Desktop'}`, 'info');
-        addLog(`Default: Shorts ${config.hideShortsByDefault ? 'hidden' : 'visible'}, Posts ${config.hidePostsByDefault ? 'hidden' : 'visible'}`, 'info');
-        addLog('Debug button: bottom-left corner', 'info');
+        addLog(`Page: ${state.isSearchPage ? 'Search Results' : 'Normal'}`, 'info');
+        addLog(`Settings: Shorts ${config.hideShortsByDefault ? 'hidden' : 'visible'}, Posts ${config.hidePostsByDefault ? 'hidden' : 'visible'}`, 'info');
 
         // Initial scan
         processElements(true);
-        setupObserver();
+        
+        // Setup observer (may be null for search pages)
+        state.observer = setupObserver();
 
-        // Auto-hide after delay
-        setTimeout(() => {
-          if (config.hideShortsByDefault) {
-            addLog('Shorts hidden by default', 'info');
+        // Update page info in controls
+        if (controlsContainer) {
+          const pageInfo = controlsContainer.querySelector('#page-info');
+          if (pageInfo) {
+            pageInfo.textContent = `${state.isSearchPage ? 'Search Results Page' : 'Normal Page'} • ${state.isMobile ? 'Mobile' : 'Desktop'}`;
           }
-          if (config.hidePostsByDefault) {
-            addLog('Posts hidden by default', 'info');
-          }
-        }, config.autoHideDelay);
+        }
 
-      }, 2000);
+      }, 1000);
 
-    }, 1000);
+    }, 500);
 
-    // Periodic scan
-    setInterval(() => processElements(), config.scanInterval);
+    // Periodic scan (primary method for search pages)
+    setInterval(() => {
+      // Only scan if not processing too frequently
+      if (Date.now() - state.lastProcessTime > config.scanInterval) {
+        processElements();
+      }
+    }, config.scanInterval);
 
     // Detect page changes
     let lastUrl = location.href;
     setInterval(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
+        
+        // Update search page state
+        state.isSearchPage = window.location.pathname.includes('/results') || 
+                             window.location.search.includes('search_query');
+        
         addLog(`Navigated to: ${location.pathname}`, 'info');
-        setTimeout(() => processElements(true), 2000);
+        addLog(`Page type: ${state.isSearchPage ? 'Search Results' : 'Normal'}`, 'info');
+        
+        // Update page info in controls
+        if (controlsContainer) {
+          const pageInfo = controlsContainer.querySelector('#page-info');
+          if (pageInfo) {
+            pageInfo.textContent = `${state.isSearchPage ? 'Search Results Page' : 'Normal Page'} • ${state.isMobile ? 'Mobile' : 'Desktop'}`;
+          }
+        }
+        
+        // Reconfigure observer if needed
+        if (state.observer) {
+          state.observer.disconnect();
+        }
+        
+        state.observer = setupObserver();
+        
+        // Process elements after navigation
+        setTimeout(() => processElements(true), 1500);
       }
     }, 1000);
-
-    // Handle window resize
-    window.addEventListener('resize', function() {
-      if (floatingButton) {
-        const rect = floatingButton.getBoundingClientRect();
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        if (rect.right > viewportWidth || rect.bottom > viewportHeight) {
-          floatingButton.style.left = Math.max(0, Math.min(rect.left, viewportWidth - rect.width)) + 'px';
-          floatingButton.style.top = Math.max(0, Math.min(rect.top, viewportHeight - rect.height)) + 'px';
-        }
-      }
-    });
   }
 
   // Start when DOM is ready
